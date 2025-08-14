@@ -2,4 +2,4 @@ streamlit
 pandas
 plotly
 xlrd
-calamine
+python-calamine
