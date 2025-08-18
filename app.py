@@ -16,7 +16,9 @@ INCLUIR_SUBPASTAS = False
 # O código vai procurar o texto da esquerda no nome do arquivo
 # e usar o texto da direita como nome da aba.
 MAPEAMENTO_NOMES = {
+    "açucar-cristal": "Açúcar Branco (Mercado Externo)",
     "açucar-santos": "Açúcar (Santos)",
+    "açucar-vph": "Açúcar VHP (Mercado Externo)",
     "café-arabica": "Café Arábica",
     "dolar": "Dólar",
     "milho": "Milho",
