@@ -18,7 +18,7 @@ INCLUIR_SUBPASTAS = False
 MAPEAMENTO_NOMES = {
     "açucar-cristal": "Açúcar Branco (Mercado Externo)",
     "açucar-santos": "Açúcar (Santos)",
-    "açucar-vph": "Açúcar VHP (Mercado Externo)",
+    "açucar-vhp": "Açúcar VHP (Mercado Externo)",
     "café-arabica": "Café Arábica",
     "dolar": "Dólar",
     "milho": "Milho",
