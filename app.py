@@ -24,6 +24,8 @@ MAPEAMENTO_NOMES = {
     "milho": "Milho",
     "robusta": "Café Robusta",
     "soja-paranagua": "Soja (Paranaguá)",
+    "etanol-diario-bovespa": "Etanol (Diário Bovespa)",
+    "soja-parana": "Soja (Paraná)",
 }
 
 st.title("Acompanhamento Cotações - CEPEA/ESALQ")
