@@ -5,7 +5,7 @@ import pandas as pd
 import streamlit as st
 import plotly.express as px
 
-st.set_page_config(page_title="Acompanhamento Cotação", layout="wide")
+st.set_page_config(page_title="📈 Acompanhamento Cotação", layout="wide")
 
 # >>> AJUSTES AQUI <<<
 PASTA_ARQUIVOS = Path(os.getenv("XLS_DIR", r"./data")).resolve()
