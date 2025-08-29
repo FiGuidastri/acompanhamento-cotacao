@@ -4,6 +4,9 @@ from datetime import timedelta
 import pandas as pd
 import streamlit as st
 import plotly.express as px
+import yfinance as yf
+import time
+import random
 
 st.set_page_config(page_title="Acompanhamento Cotação", layout="wide", page_icon="💰")
 
@@ -12,9 +15,6 @@ PASTA_ARQUIVOS = Path(os.getenv("XLS_DIR", r"./data")).resolve()
 INCLUIR_SUBPASTAS = False
 
 # MAPEAMENTO DE NOMES PARA AS ABAS:
-# Adicione ou altere as "traduções" aqui.
-# O código vai procurar o texto da esquerda no nome do arquivo
-# e usar o texto da direita como nome da aba.
 MAPEAMENTO_NOMES = {
     "açucar-cristal": "Açúcar Branco (Mercado Externo)",
     "açucar-santos": "Açúcar (Santos)",
@@ -26,20 +26,90 @@ MAPEAMENTO_NOMES = {
     "soja-paranagua": "Soja (Paranaguá)",
     "etanol-diario-bovespa": "Etanol (Diário Bovespa)",
     "soja-parana": "Soja (Paraná)",
+    "soja-chicago": "Soja (Chicago)",
+}
+
+# MAPEAMENTO DE UNIDADES PARA CADA COMMODITY
+UNIDADES_COMMODITIES = {
+    "açucar-cristal": "saca de 50kg",
+    "açucar-santos": "saca de 50kg", 
+    "açucar-vhp": "tonelada",
+    "café-arabica": "saca de 60kg",
+    "dolar": "",
+    "milho": "saca de 60kg",
+    "robusta": "saca de 60kg",
+    "soja-paranagua": "saca de 60kg",
+    "etanol-diario-bovespa": "litro",
+    "soja-parana": "saca de 60kg",
+    "soja-chicago": "tonelada",
 }
 
 st.title("Acompanhamento Cotações - CEPEA/ESALQ")
 
-
 # ---------- utilidades ----------
+def aplicar_correcao_etanol(df: pd.DataFrame, nome_arquivo: str) -> pd.DataFrame:
+    """Aplica correção específica para etanol - divide valores por 1000"""
+    if "etanol" in nome_arquivo.lower() and "À vista R$" in df.columns:
+        df = df.copy()
+        df["À vista R$"] = df["À vista R$"] / 1000
+    return df
+
+def obter_unidade_commodity(nome_arquivo: str) -> str:
+    """Obtém a unidade da commodity baseada no nome do arquivo"""
+    nome_arquivo = nome_arquivo.lower()
+    for chave, unidade in UNIDADES_COMMODITIES.items():
+        if chave in nome_arquivo:
+            return unidade
+    return ""
+
+@st.cache_data(ttl=7200, show_spinner=False)
+def buscar_dados_soja_chicago():
+    """Busca dados da soja de Chicago com tratamento de rate limiting"""
+    try:
+        time.sleep(random.uniform(1, 3))
+        soja = yf.Ticker("ZS=F")
+        
+        try:
+            dados = soja.history(period="6mo")
+        except:
+            time.sleep(2)
+            dados = soja.history(period="3mo")
+        
+        if dados.empty:
+            raise Exception("Dados vazios retornados da API")
+        
+        df_soja = pd.DataFrame()
+        df_soja["Data"] = dados.index.date
+        df_soja["À vista R$"] = dados["Close"].values
+        
+        # Conversão aproximada: centavos USD/bushel para R$/tonelada
+        taxa_cambio = 5.0
+        df_soja["À vista R$"] = df_soja["À vista R$"] * 36.74 * taxa_cambio / 100
+        
+        df_soja = df_soja.sort_values("Data").reset_index(drop=True)
+        return {"Soja Chicago": df_soja}, False
+        
+    except Exception as e:
+        st.warning(f"⚠️ Erro ao buscar dados da soja de Chicago: {str(e)}")
+        st.info("📊 Usando dados de exemplo para demonstração")
+        
+        dates = pd.date_range(end=pd.Timestamp.now().date(), periods=30, freq='D')
+        exemplo_precos = [1800 + i*5 + random.uniform(-50, 50) for i in range(30)]
+        
+        df_exemplo = pd.DataFrame({
+            "Data": dates.date,
+            "À vista R$": exemplo_precos
+        })
+        
+        return {"Soja Chicago": df_exemplo}, True
+
 def mapear_nome_arquivo(path_arquivo: str) -> str:
     """Usa o MAPEAMENTO_NOMES para encontrar um nome amigável para a aba."""
     nome_arquivo = Path(path_arquivo).name.lower()
     for chave, nome_aba in MAPEAMENTO_NOMES.items():
         if chave in nome_arquivo:
             return nome_aba
-    return Path(path_arquivo).name  # Retorna o nome original se não encontrar
-
+    return Path(path_arquivo).name
 
 def listar_planilhas(dirpath: Path, recursivo: bool = False):
     if not dirpath.exists():
@@ -49,7 +119,6 @@ def listar_planilhas(dirpath: Path, recursivo: bool = False):
                    if f.is_file() and f.suffix.lower() == ".xls"])
 
 def _normalize_numeric_series(s: pd.Series) -> pd.Series:
-    # normaliza números estilo BR: "1.234,56" -> 1234.56
     if s.dtype == object:
         return pd.to_numeric(
             s.astype(str).str.replace(r"\.", "", regex=True).str.replace(",", ".", regex=False),
@@ -58,19 +127,18 @@ def _normalize_numeric_series(s: pd.Series) -> pd.Series:
     return pd.to_numeric(s, errors="coerce")
 
 def _clean_df(df: pd.DataFrame) -> pd.DataFrame:
-    # tenta achar a linha de cabeçalho (procura "Data")
     header_idx = None
     for i, row in df.iterrows():
         if any(str(x).strip().lower() == "data" for x in row.values):
             header_idx = i
             break
-    # se encontrar, reatribui cabeçalho
+    
     if header_idx is not None:
         df = df.iloc[header_idx + 1:].reset_index(drop=True)\
                .rename(columns={j: v for j, v in enumerate(df.iloc[header_idx].tolist())})
-    # strip e dedup de colunas
+    
     df.columns = [str(c).strip() for c in df.columns]
-    # remove duplicatas de colunas adicionando sufixo
+    
     seen = {}
     new_cols = []
     for col in df.columns:
@@ -81,14 +149,13 @@ def _clean_df(df: pd.DataFrame) -> pd.DataFrame:
             seen[col] = 0
             new_cols.append(col)
     df.columns = new_cols
-    # parse de data (se existir coluna "Data")
+    
     if "Data" in df.columns:
         df["Data"] = pd.to_datetime(df["Data"], dayfirst=True, errors="coerce")
-    # normaliza numéricos
+    
     for c in df.columns:
         if c != "Data":
             tmp = _normalize_numeric_series(df[c])
-            # só troca se ganhou valores numéricos de verdade
             if tmp.notna().sum() > 0:
                 df[c] = tmp
     return df
@@ -107,14 +174,12 @@ def _resalvar_com_excel(path_xls: str) -> str:
     xl.DisplayAlerts = False
     wb = xl.Workbooks.Open(str(Path(path_xls).resolve()))
     novo = str(Path(path_xls).with_suffix(".reparado.xlsx"))
-    wb.SaveAs(novo, FileFormat=51)  # .xlsx
+    wb.SaveAs(novo, FileFormat=51)
     wb.Close(False); xl.Quit()
     return novo
 
 @st.cache_data(show_spinner=False)
 def ler_planilha_robusta(caminho_arquivo: str) -> dict:
-    p = Path(caminho_arquivo)
-    # Para arquivos .xls, tenta primeiro o xlrd, depois calamine, depois Excel COM
     try:
         return _read_all_sheets(caminho_arquivo, engine="xlrd")
     except Exception:
@@ -130,24 +195,31 @@ def ler_planilha_robusta(caminho_arquivo: str) -> dict:
 def colunas_numericas(df: pd.DataFrame):
     return list(df.select_dtypes(include="number").columns)
 
-def sugestao_eixos(df: pd.DataFrame):
-    x = "Data" if "Data" in df.columns else (df.columns[0] if len(df.columns) else None)
-    # Prioriza coluna "À vista R$" se existir
-    if "À vista R$" in df.columns:
-        return x, ["À vista R$"]
-    ys = colunas_numericas(df)
-    return x, (ys[:1] if len(ys) >= 1 else ys)
-
-
 # ---------- app ----------
 arquivos = listar_planilhas(PASTA_ARQUIVOS, INCLUIR_SUBPASTAS)
-if not arquivos:
-    st.error(f"Nenhum .xls encontrado em: {PASTA_ARQUIVOS}")
+
+# Adiciona a soja de Chicago
+dados_soja_chicago, usando_exemplo = buscar_dados_soja_chicago()
+arquivos_completos = arquivos + ["soja-chicago"]
+
+if not arquivos_completos:
+    st.error(f"Nenhum arquivo encontrado em: {PASTA_ARQUIVOS}")
     st.stop()
 
-# >>> LINHA ALTERADA PARA USAR O MAPEAMENTO <<<
-tabs = st.tabs([mapear_nome_arquivo(a) for a in arquivos])
+# Cria as tabs
+nomes_tabs = []
+for arq in arquivos_completos:
+    if arq == "soja-chicago":
+        nome_tab = "Soja (Chicago)"
+        if usando_exemplo:
+            nome_tab += " 📊"
+        nomes_tabs.append(nome_tab)
+    else:
+        nomes_tabs.append(mapear_nome_arquivo(arq))
 
+tabs = st.tabs(nomes_tabs)
+
+# Processa arquivos Excel
 for idx, arq in enumerate(arquivos):
     with tabs[idx]:
         sheets = ler_planilha_robusta(arq)
@@ -159,14 +231,17 @@ for idx, arq in enumerate(arquivos):
 
         nomes_abas = list(sheets.keys())
         if not nomes_abas:
-            st.warning("Arquivo sem abas legíveis."); continue
+            st.warning("Arquivo sem abas legíveis.")
+            continue
 
-        # Usa a primeira aba automaticamente
         df = sheets[nomes_abas[0]].copy()
 
         if df.empty:
-            st.warning("A aba selecionada está vazia."); continue
+            st.warning("A aba selecionada está vazia.")
+            continue
 
+        # APLICA CORREÇÃO DO ETANOL - DIVIDE POR 1000
+        df = aplicar_correcao_etanol(df, arq)
 
         # Filtro de data
         if "Data" in df.columns and pd.api.types.is_datetime64_any_dtype(df["Data"]):
@@ -186,17 +261,21 @@ for idx, arq in enumerate(arquivos):
                     start_date, end_date = date_range
                     df = df[(df["Data"].dt.date >= start_date) & (df["Data"].dt.date <= end_date)]
         
-        # Layout em duas colunas: gráfico e tabela
+        # Layout em duas colunas
         col_grafico, col_tabela = st.columns([2, 1])
         
         with col_grafico:
-            # Usa apenas "À vista R$" se disponível
             if "À vista R$" in df.columns:
                 y_col = "À vista R$"
                 x_col = "Data" if "Data" in df.columns else df.columns[0]
                 
+                # Adiciona nome do ativo e unidade no título
+                nome_ativo = mapear_nome_arquivo(arq)
+                unidade = obter_unidade_commodity(arq)
+                titulo = f"{nome_ativo} - Preço À Vista ({unidade})" if unidade else f"{nome_ativo} - Preço À Vista"
+                
                 try:
-                    fig = px.line(df, x=x_col, y=y_col, markers=True, title="Preço À Vista")
+                    fig = px.line(df, x=x_col, y=y_col, markers=True, title=titulo)
                     fig.update_layout(height=400, margin=dict(l=10, r=10, t=40, b=10))
                     st.plotly_chart(fig, use_container_width=True)
                 except Exception as e:
@@ -214,14 +293,62 @@ for idx, arq in enumerate(arquivos):
                     st.warning("Não há colunas numéricas para plotar.")
 
         with col_tabela:
-            # Mostra apenas colunas relevantes na tabela - últimos 7 dias
             cols_mostrar = ["Data", "À vista R$"] if "À vista R$" in df.columns else df.columns[:3]
             df_tab = df[cols_mostrar].copy()
             
-            # Filtra os últimos 7 dias
             if "Data" in df_tab.columns and pd.api.types.is_datetime64_any_dtype(df_tab["Data"]):
                 df_tab = df_tab.sort_values("Data", ascending=False).head(7)
             else:
                 df_tab = df_tab.tail(6)
             
+            # Formatar valores numéricos para 2 casas decimais
+            if "À vista R$" in df_tab.columns:
+                df_tab["À vista R$"] = df_tab["À vista R$"].round(2)
+            
             st.dataframe(df_tab, use_container_width=True, height=400)
+
+# Processa soja de Chicago
+if len(arquivos_completos) > len(arquivos):
+    with tabs[-1]:  # Última tab é a soja de Chicago
+        df_soja = dados_soja_chicago["Soja Chicago"].copy()
+        
+        if not df_soja.empty:
+            # Filtro de data para soja
+            if "Data" in df_soja.columns:
+                df_soja["Data"] = pd.to_datetime(df_soja["Data"])
+                min_date = df_soja["Data"].min().date()
+                max_date = df_soja["Data"].max().date()
+                
+                date_range = st.date_input(
+                    "Período",
+                    value=(min_date, max_date),
+                    min_value=min_date,
+                    max_value=max_date,
+                    key="date_range_soja_chicago"
+                )
+                
+                if len(date_range) == 2:
+                    start_date, end_date = date_range
+                    df_soja = df_soja[(df_soja["Data"].dt.date >= start_date) & (df_soja["Data"].dt.date <= end_date)]
+            
+            col_grafico, col_tabela = st.columns([2, 1])
+            
+            with col_grafico:
+                try:
+                    fig = px.line(df_soja, x="Data", y="À vista R$", markers=True, 
+                                title="Soja (Chicago) - Preço À Vista (tonelada)")
+                    fig.update_layout(height=400, margin=dict(l=10, r=10, t=40, b=10))
+                    st.plotly_chart(fig, use_container_width=True)
+                except Exception as e:
+                    st.error(f"Erro ao plotar soja de Chicago: {e}")
+            
+            with col_tabela:
+                df_tab_soja = df_soja[["Data", "À vista R$"]].copy()
+                df_tab_soja = df_tab_soja.sort_values("Data", ascending=False).head(7)
+                
+                # Formatar valores para 2 casas decimais
+                df_tab_soja["À vista R$"] = df_tab_soja["À vista R$"].round(2)
+                
+                st.dataframe(df_tab_soja, use_container_width=True, height=400)
+        else:
+            st.warning("Não foi possível obter dados da soja de Chicago.")

@@ -3,3 +3,4 @@ pandas
 plotly
 xlrd
 python-calamine
+yfinance
