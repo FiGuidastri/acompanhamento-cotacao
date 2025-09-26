@@ -11,7 +11,7 @@ import random
 st.set_page_config(page_title="Acompanhamento Cotação", layout="wide", page_icon="💰")
 
 # >>> AJUSTES AQUI <<<
-PASTA_ARQUIVOS = Path(os.getenv("XLS_DIR", r"./data")).resolve()
+PASTA_ARQUIVOS = Path(os.getenv("XLS_DIR", r"./data/processed")).resolve()
 INCLUIR_SUBPASTAS = False
 
 # MAPEAMENTO DE NOMES PARA AS ABAS:
@@ -27,6 +27,7 @@ MAPEAMENTO_NOMES = {
     "etanol-diario-bovespa": "Etanol (Diário Bovespa)",
     "soja-parana": "Soja (Paraná)",
     "soja-chicago": "Soja (Chicago)",
+    "algodão": "Algodão",
 }
 
 # MAPEAMENTO DE UNIDADES PARA CADA COMMODITY
@@ -42,6 +43,7 @@ UNIDADES_COMMODITIES = {
     "etanol-diario-bovespa": "litro",
     "soja-parana": "saca de 60kg",
     "soja-chicago": "tonelada",
+    "algodão": "libra-peso",
 }
 
 st.title("Acompanhamento Cotações - CEPEA/ESALQ")
@@ -115,8 +117,10 @@ def listar_planilhas(dirpath: Path, recursivo: bool = False):
     if not dirpath.exists():
         return []
     pattern = "**/*" if recursivo else "*"
-    return sorted([str(f) for f in dirpath.glob(pattern)
-                   if f.is_file() and f.suffix.lower() == ".xls"])
+    arquivos = []
+    for ext in [".xls", ".xlsx"]:
+        arquivos.extend(str(f) for f in dirpath.glob(f"{pattern}{ext}") if f.is_file())
+    return sorted(arquivos)
 
 def _normalize_numeric_series(s: pd.Series) -> pd.Series:
     if s.dtype == object:
